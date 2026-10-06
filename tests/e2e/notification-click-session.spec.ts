@@ -133,8 +133,8 @@ test('notification click opens the originating tab and keeps a closed session cl
   await clickRetainedNotification(electronApp)
   await expect
     .poll(() => orcaPage.evaluate(() => window.__store?.getState().activeTabId))
-    .toBe(baseline ? previousTabId : originTabId)
-  await waitForTerminalOutput(orcaPage, baseline ? 'OTHER_SESSION' : 'ORIGINATING_SESSION')
+    .toBe(originTabId)
+  await waitForTerminalOutput(orcaPage, 'ORIGINATING_SESSION')
   await orcaPage.waitForTimeout(350)
   const frames = await probe.evaluate((probe) => probe.stop())
   await probe.dispose()
