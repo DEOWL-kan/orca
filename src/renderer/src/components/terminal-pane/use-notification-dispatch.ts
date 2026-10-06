@@ -176,7 +176,8 @@ export function dispatchTerminalNotification(
         ...getNotificationNavigationTarget(
           state,
           request.workspaceId,
-          request.subjectKey ?? undefined
+          request.subjectKey ?? undefined,
+          event.workspaceOwner
         ),
         ...getNotificationWorkspaceLabels(state, request.workspaceId, event.terminalTitle),
         notificationSourceId: notificationSourceForOwner(

@@ -101,6 +101,10 @@ export function installAppLifetimeIpcEvents(
   registerOsMarkdownFileOpenBridge(unsubs)
   // Why: latest click wins — an earlier intent must not steal focus after a newer one resolves.
   let latestActivateWorktreeIntent = 0
+  let activationQueue = Promise.resolve()
+  unsubs.push(() => {
+    latestActivateWorktreeIntent++
+  })
   unsubs.push(
     window.api.ui.onActivateWorktree(
       ({
@@ -110,42 +114,48 @@ export function installAppLifetimeIpcEvents(
         startup,
         defaultTabs,
         notificationPaneKey,
+        notificationSurface,
         executionHostId
       }) => {
         const intent = ++latestActivateWorktreeIntent
         const notificationExecutionHostId = normalizeExecutionHostId(executionHostId)
-        void worktreeRuntime
-          .activateNotifiedWorktree(
-            {
-              type: 'activateWorktree',
-              worktreeId,
-              ...(repoId ? { repoId } : {}),
-              ...(setup ? { setup } : {}),
-              ...(startup ? { startup } : {}),
-              ...(defaultTabs ? { defaultTabs } : {}),
-              ...(notificationPaneKey !== undefined ? { notificationPaneKey } : {}),
-              ...(notificationExecutionHostId
-                ? { executionHostId: notificationExecutionHostId }
-                : {})
-            },
-            {
-              // Why: a notification click names its own host, so it may target a runtime workspace.
-              allowRuntimeEnvironment: notificationPaneKey !== undefined,
-              isCurrentLocalIntent: () => intent === latestActivateWorktreeIntent
+        // Finish an in-flight host selection before sending the newest click.
+        activationQueue = activationQueue
+          .then(async () => {
+            if (intent !== latestActivateWorktreeIntent) {
+              return
             }
-          )
-          .then(async (activated) => {
+            const activated = await worktreeRuntime.activateNotifiedWorktree(
+              {
+                type: 'activateWorktree',
+                worktreeId,
+                ...(repoId ? { repoId } : {}),
+                ...(setup ? { setup } : {}),
+                ...(startup ? { startup } : {}),
+                ...(defaultTabs ? { defaultTabs } : {}),
+                ...(notificationPaneKey !== undefined ? { notificationPaneKey } : {}),
+                ...(notificationExecutionHostId
+                  ? { executionHostId: notificationExecutionHostId }
+                  : {})
+              },
+              {
+                // Why: a notification click names its own host, so it may target a runtime workspace.
+                allowRuntimeEnvironment: notificationPaneKey !== undefined,
+                isCurrentLocalIntent: () => intent === latestActivateWorktreeIntent
+              }
+            )
             if (!activated || intent !== latestActivateWorktreeIntent) {
               return
             }
             await focusNotificationPaneAfterActivation({
               worktreeId,
               notificationPaneKey,
+              notificationSurface,
               executionHostId: notificationExecutionHostId,
               isCurrentIntent: () => intent === latestActivateWorktreeIntent
             })
           })
-          .catch((error) => console.error('Failed to activate CLI-created worktree:', error))
+          .catch((error) => console.error('Failed to activate requested workspace:', error))
       }
     )
   )

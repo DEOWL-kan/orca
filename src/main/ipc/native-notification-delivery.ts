@@ -90,6 +90,7 @@ export function deliverNativeNotification(
       win.webContents.send('ui:activateWorktree', {
         ...(repoId ? { repoId } : {}),
         worktreeId: args.worktreeId,
+        ...(args.surface ? { notificationSurface: args.surface } : {}),
         notificationPaneKey: args.paneKey ?? null,
         ...(args.executionHostId ? { executionHostId: args.executionHostId } : {})
       })

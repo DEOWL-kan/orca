@@ -1,3 +1,10 @@
+import { structuredAgentSessionPaneKey } from '../../../../shared/structured-agent-session-projection'
+import {
+  notificationExecutionHostForOwner,
+  resolveNotificationTabOwner
+} from '@/attention/notification-subject-owner'
+import { focusExistingWorkspaceTab } from './focus-existing-workspace-tab'
+import { resolveWindowTabIdForHostTab } from './host-session-tab-target'
 import { useAppStore } from '../../store'
 import { isCurrentKnownPaneKey } from '@/components/terminal-pane/terminal-notification-state'
 import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
@@ -5,35 +12,52 @@ import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { parsePaneKey } from '../../../../shared/stable-pane-id'
 import { activateNotificationRuntimeTarget } from './notification-runtime-navigation'
 
-/**
- * Second half of a notification click: activation has resolved the workspace, so select and focus
- * the pane that produced the notification. A pane that has since closed leaves the workspace
- * activated with its current session selected — the closed session is never recreated.
- */
+// Activate existing surfaces only; a closed target leaves the workspace selected.
 export async function focusNotificationPaneAfterActivation(args: {
   worktreeId: string
+  notificationSurface?: 'terminal' | 'agent-session'
   notificationPaneKey?: string | null
   executionHostId: ExecutionHostId | null
   isCurrentIntent: () => boolean
 }): Promise<void> {
-  const { worktreeId, notificationPaneKey, executionHostId, isCurrentIntent } = args
+  const { worktreeId, notificationPaneKey, notificationSurface, executionHostId, isCurrentIntent } =
+    args
   const activateWorkspaceOnly = async (): Promise<void> => {
     if (executionHostId) {
       await activateNotificationRuntimeTarget({ executionHostId, worktreeId })
     }
   }
 
-  const pane = notificationPaneKey ? parsePaneKey(notificationPaneKey) : null
-  if (
-    !notificationPaneKey ||
-    !pane ||
-    !isCurrentKnownPaneKey(
-      useAppStore.getState(),
-      worktreeId,
-      notificationPaneKey,
-      executionHostId ?? undefined
+  if (!isCurrentIntent()) {
+    return
+  }
+  const isKnownTarget = (): boolean => {
+    if (!notificationPaneKey || !executionHostId) {
+      return false
+    }
+    if (notificationSurface !== 'agent-session') {
+      return isCurrentKnownPaneKey(
+        useAppStore.getState(),
+        worktreeId,
+        notificationPaneKey,
+        executionHostId
+      )
+    }
+    const pane = parsePaneKey(notificationPaneKey)
+    if (!pane) {
+      return false
+    }
+    const state = useAppStore.getState()
+    const localTabId = resolveWindowTabIdForHostTab(worktreeId, pane.tabId)
+    const tab = state.unifiedTabsByWorktree[worktreeId]?.find((item) => item.id === localTabId)
+    return Boolean(
+      tab?.contentType === 'agent-session' &&
+      structuredAgentSessionPaneKey(pane.tabId, tab.entityId) === notificationPaneKey &&
+      notificationExecutionHostForOwner(resolveNotificationTabOwner(state, tab)) === executionHostId
     )
-  ) {
+  }
+  const pane = notificationPaneKey ? parsePaneKey(notificationPaneKey) : null
+  if (!notificationPaneKey || !pane || !isKnownTarget()) {
     await activateWorkspaceOnly()
     return
   }
@@ -45,11 +69,16 @@ export async function focusNotificationPaneAfterActivation(args: {
       executionHostId,
       worktreeId,
       tabId: pane.tabId,
-      leafId: pane.leafId
+      ...(notificationSurface !== 'agent-session' ? { leafId: pane.leafId } : {})
     })) ||
     !isCurrentIntent() ||
-    !isCurrentKnownPaneKey(useAppStore.getState(), worktreeId, notificationPaneKey, executionHostId)
+    !isKnownTarget()
   ) {
+    return
+  }
+
+  if (notificationSurface === 'agent-session') {
+    focusExistingWorkspaceTab({ tabId: pane.tabId, worktreeId, userInitiated: true })
     return
   }
 

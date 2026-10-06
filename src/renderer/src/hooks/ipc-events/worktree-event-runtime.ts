@@ -167,7 +167,9 @@ export function createWorktreeEventRuntime(
       return (
         activateAndRevealWorkspace(worktreeId, {
           ...(executionHostId ? { executionHostId } : {}),
-          ...(notificationPaneKey !== undefined ? { providesInitialSurface: true } : {})
+          ...(notificationPaneKey !== undefined
+            ? { providesInitialSurface: true, restoreSessions: false }
+            : {})
         }) !== false
       )
     }
@@ -178,10 +180,12 @@ export function createWorktreeEventRuntime(
           : useAppStore.getState().getKnownWorktreeById(worktreeId)
       )
     const existedBeforeFetch = getKnownWorktree()
-    // Why: fetch first so activation can resolve the CLI-created worktree; it arrived from main, not yet in renderer state.
-    await (executionHostId
-      ? useAppStore.getState().fetchWorktrees(repoId, { executionHostId })
-      : useAppStore.getState().fetchWorktrees(repoId))
+    // A known notification target needs no workspace inventory refresh.
+    if (notificationPaneKey === undefined || !existedBeforeFetch) {
+      await (executionHostId
+        ? useAppStore.getState().fetchWorktrees(repoId, { executionHostId })
+        : useAppStore.getState().fetchWorktrees(repoId))
+    }
     if (options.isCurrentLocalIntent && !options.isCurrentLocalIntent()) {
       // Why: a newer click superseded this one while the fetch was in flight.
       return false
@@ -195,7 +199,9 @@ export function createWorktreeEventRuntime(
         ...(defaultTabs ? { defaultTabs } : {}),
         ...(!existedBeforeFetch && existsAfterFetch ? { sidebarRevealBehavior: 'auto' } : {}),
         ...(executionHostId ? { executionHostId } : {}),
-        ...(notificationPaneKey !== undefined ? { providesInitialSurface: true } : {}),
+        ...(notificationPaneKey !== undefined
+          ? { providesInitialSurface: true, restoreSessions: false }
+          : {}),
         // Why: this activation came from the host runtime stream; echoing it back can create a selection loop.
         notifyHostRuntime: false
       }) !== false

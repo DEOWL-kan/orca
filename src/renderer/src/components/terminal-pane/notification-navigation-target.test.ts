@@ -1,3 +1,10 @@
+import {
+  createTestStore,
+  makeTab,
+  makeWorktree,
+  TEST_REPO
+} from '@/store/slices/store-test-helpers'
+import { parseExecutionHostId } from '../../../../shared/execution-host'
 import { describe, expect, it } from 'vitest'
 import { toRemoteRuntimePtyId } from '../../../../shared/remote-runtime-pty-id'
 import { getNotificationNavigationTarget } from './notification-navigation-target'
@@ -8,20 +15,32 @@ function targetFor(
   ptyId: string,
   worktrees: { id: string; repoId: string; hostId?: string }[]
 ): ReturnType<typeof getNotificationNavigationTarget> {
-  return getNotificationNavigationTarget(
-    {
-      activeWorktreeId: null,
-      tabsByWorktree: { 'wt-primary': [{ id: 'tab-1', ptyId }] },
-      terminalLayoutsByTabId: {},
-      worktreesByRepo: { repo1: worktrees },
-      repos: [{ id: 'repo1', connectionId: null }]
-    } as never,
-    'wt-primary',
-    paneKey
-  )
+  const store = createTestStore()
+  store.setState({
+    activeWorktreeId: null,
+    tabsByWorktree: { 'wt-primary': [makeTab({ id: 'tab-1', worktreeId: 'wt-primary', ptyId })] },
+    terminalLayoutsByTabId: {},
+    worktreesByRepo: {
+      repo1: worktrees.map((worktree) =>
+        makeWorktree({ ...worktree, hostId: parseExecutionHostId(worktree.hostId)?.id })
+      )
+    },
+    repos: [TEST_REPO]
+  })
+  return getNotificationNavigationTarget(store.getState(), 'wt-primary', paneKey)
 }
 
 describe('getNotificationNavigationTarget', () => {
+  it('keeps the captured transport owner when catalog hydration has no owner yet', () => {
+    const store = createTestStore()
+    expect(
+      getNotificationNavigationTarget(store.getState(), 'wt-primary', paneKey, {
+        executionHostId: null,
+        runtimeEnvironmentId: 'captured-host'
+      })
+    ).toEqual({ executionHostId: 'runtime:captured-host', paneKey })
+  })
+
   it.each([
     [
       'runtime pane',

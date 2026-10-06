@@ -50,6 +50,7 @@ export type UiActivateWorktreePayload = {
   startup?: WorktreeStartupLaunch
   defaultTabs?: WorktreeDefaultTabsLaunch
   /** Present only for native-notification navigation; null means project-only fallback. */
+  notificationSurface?: 'terminal' | 'agent-session'
   notificationPaneKey?: string | null
   /** Captured native-notification owner; absent for legacy and ordinary CLI intents. */
   executionHostId?: ExecutionHostId

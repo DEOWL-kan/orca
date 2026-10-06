@@ -1,5 +1,6 @@
 import type * as ReactModule from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { assertSerializedNotificationClickRace } from './notification-click-navigation-race.test-scenario'
 import { toRemoteRuntimePtyId } from '../../../shared/remote-runtime-pty-id'
 
 describe('useIpcEvents CLI-created worktree activation', () => {
@@ -8,14 +9,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     vi.unstubAllGlobals()
   })
 
-  // Why: regression guard. The CLI "create agent" flow emits
-  // `ui:activateWorktree` to switch the user to the new workspace. A prior
-  // implementation hand-rolled the activation (setActiveRepo + setActiveView
-  // + setActiveWorktree + ensureWorktreeHasInitialTerminal +
-  // revealWorktreeInSidebar), which bypassed recordWorktreeVisit and left
-  // the back/forward buttons ignoring the CLI-driven switch. This test pins
-  // the handler to the canonical `activateAndRevealWorktree` helper, which
-  // is the single place that records the visit in history.
+  // Canonical activation records CLI-created workspaces in back/forward history.
   it('routes ui:activateWorktree intents through their workspace activation paths', async () => {
     const callOrder: string[] = []
     const activateAndRevealWorktree = vi.fn(() => {
@@ -30,7 +24,10 @@ describe('useIpcEvents CLI-created worktree activation', () => {
       callOrder.push('focus pane')
     })
     const activateNotificationRuntimeTarget = vi.fn().mockResolvedValue(true)
-    const settings = { activeRuntimeEnvironmentId: null as string | null, terminalFontSize: 13 }
+    const settings: { activeRuntimeEnvironmentId: string | null; terminalFontSize: number } = {
+      activeRuntimeEnvironmentId: null,
+      terminalFontSize: 13
+    }
     const nativeChatTab = { id: 'tab-native', ptyId: 'pty-native', viewMode: 'chat' }
     let tabsByWorktree: Record<string, (typeof nativeChatTab)[]> = {
       'wt-existing': [nativeChatTab]
@@ -48,7 +45,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
             worktreeId: string
             setup?: { runnerScriptPath: string; envVars: Record<string, string> }
             notificationPaneKey?: string | null
-            executionHostId?: 'local' | `ssh:${string}` | `runtime:${string}`
+            executionHostId?: string
           }) => void)
         | null
     } = { current: null }
@@ -172,7 +169,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
               worktreeId: string
               setup?: { runnerScriptPath: string; envVars: Record<string, string> }
               notificationPaneKey?: string | null
-              executionHostId?: 'local' | `ssh:${string}` | `runtime:${string}`
+              executionHostId?: string
             }) => void
           ) => {
             activateWorktreeListenerRef.current = listener
@@ -280,16 +277,10 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    // Worktrees must be fetched first so activateAndRevealWorktree can resolve
-    // the CLI-created worktree out of store state.
+    // Fetch the newly created workspace before resolving its activation target.
     expect(fetchWorktrees).toHaveBeenCalledWith('repo-1')
 
-    // The core regression guard: the handler must delegate to the canonical
-    // activation helper (which records the visit in history) rather than
-    // hand-rolling the activation steps and skipping recordWorktreeVisit.
-    // `setup` must be passed through the `setup` opt — not positionally
-    // mis-aliased into `startup`, which was a latent bug in the original
-    // hand-rolled path.
+    // Preserve visit history and pass setup without mistaking it for startup.
     expect(activateAndRevealWorktree).toHaveBeenCalledTimes(1)
     expect(activateAndRevealWorktree).toHaveBeenCalledWith('wt-new', {
       setup,
@@ -317,6 +308,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     activateAndRevealWorktree.mockClear()
     fetchWorktrees.mockClear()
     activateWorktreeListenerRef.current({ worktreeId: 'folder:folder-1' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(fetchWorktrees).not.toHaveBeenCalled()
     expect(activateAndRevealWorktree).not.toHaveBeenCalled()
@@ -337,11 +329,12 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(callOrder).toEqual(['fetch', 'activate project', 'focus pane'])
+    expect(callOrder).toEqual(['activate project', 'focus pane'])
     expect(activateAndRevealWorktree).toHaveBeenLastCalledWith('wt-existing', {
       executionHostId: 'local',
       notifyHostRuntime: false,
-      providesInitialSurface: true
+      providesInitialSurface: true,
+      restoreSessions: false
     })
     expect(activateTabAndFocusPane).toHaveBeenCalledWith(
       'tab-native',
@@ -354,8 +347,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     )
 
     // Why: a null pane key is the project-only fallback — activate, never focus.
-    activateAndRevealWorktree.mockClear()
-    activateTabAndFocusPane.mockClear()
+    vi.clearAllMocks()
     activateWorktreeListenerRef.current({
       repoId: 'repo-1',
       worktreeId: 'wt-existing',
@@ -367,7 +359,8 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     expect(activateAndRevealWorktree).toHaveBeenLastCalledWith('wt-existing', {
       executionHostId: 'local',
       notifyHostRuntime: false,
-      providesInitialSurface: true
+      providesInitialSurface: true,
+      restoreSessions: false
     })
     expect(activateTabAndFocusPane).not.toHaveBeenCalled()
 
@@ -433,7 +426,8 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     expect(callOrder).toEqual(['activate workspace', 'focus pane'])
     expect(activateAndRevealWorkspace).toHaveBeenLastCalledWith('folder:folder-1', {
       executionHostId: 'local',
-      providesInitialSurface: true
+      providesInitialSurface: true,
+      restoreSessions: false
     })
     expect(activateTabAndFocusPane).toHaveBeenCalledWith(
       'tab-native',
@@ -468,7 +462,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
       repoId: 'repo-1',
       worktreeId: 'wt-existing',
       notificationPaneKey: null,
-      executionHostId: 'bogus' as 'local'
+      executionHostId: 'bogus'
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(fetchWorktrees).not.toHaveBeenCalled()
@@ -499,11 +493,12 @@ describe('useIpcEvents CLI-created worktree activation', () => {
       executionHostId: 'local'
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(fetchWorktrees).toHaveBeenCalledWith('repo-1', { executionHostId: 'local' })
+    expect(fetchWorktrees).not.toHaveBeenCalled()
     expect(activateAndRevealWorktree).toHaveBeenLastCalledWith('wt-existing', {
       executionHostId: 'local',
       notifyHostRuntime: false,
-      providesInitialSurface: true
+      providesInitialSurface: true,
+      restoreSessions: false
     })
 
     activateAndRevealWorktree.mockClear()
@@ -515,13 +510,12 @@ describe('useIpcEvents CLI-created worktree activation', () => {
       executionHostId: 'ssh:notification-origin'
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(fetchWorktrees).toHaveBeenCalledWith('repo-1', {
-      executionHostId: 'ssh:notification-origin'
-    })
+    expect(fetchWorktrees).not.toHaveBeenCalled()
     expect(activateAndRevealWorktree).toHaveBeenLastCalledWith('wt-existing', {
       executionHostId: 'ssh:notification-origin',
       notifyHostRuntime: false,
-      providesInitialSurface: true
+      providesInitialSurface: true,
+      restoreSessions: false
     })
 
     activateAndRevealWorkspace.mockClear()
@@ -533,7 +527,8 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(activateAndRevealWorkspace).toHaveBeenLastCalledWith('folder:folder-1', {
       executionHostId: 'ssh:folder-origin',
-      providesInitialSurface: true
+      providesInitialSurface: true,
+      restoreSessions: false
     })
 
     // Why: a runtime pane is selected on the host before the client focuses it.
@@ -545,21 +540,21 @@ describe('useIpcEvents CLI-created worktree activation', () => {
       executionHostId: 'runtime:env-1' as const
     }
     nativeChatTab.ptyId = toRemoteRuntimePtyId('pty-native', 'env-1')
-    vi.clearAllMocks()
-    activateWorktreeListenerRef.current(runtimeIntent)
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(activateNotificationRuntimeTarget).toHaveBeenCalledWith({
-      executionHostId: 'runtime:env-1',
-      worktreeId: 'wt-existing',
-      tabId: 'tab-native',
-      leafId: '123e4567-e89b-42d3-a456-426614174000'
+    await assertSerializedNotificationClickRace({
+      listener: activateWorktreeListenerRef.current,
+      runtimeIntent,
+      activateNotificationRuntimeTarget,
+      activateTabAndFocusPane,
+      addNewestTab: () => {
+        tabsByWorktree['wt-newest'] = [
+          {
+            id: 'tab-newest',
+            ptyId: toRemoteRuntimePtyId('pty-newest', 'env-1'),
+            viewMode: 'terminal'
+          }
+        ]
+      }
     })
-
-    vi.clearAllMocks()
-    activateNotificationRuntimeTarget.mockResolvedValueOnce(false)
-    activateWorktreeListenerRef.current(runtimeIntent)
-    await vi.waitFor(() => expect(activateNotificationRuntimeTarget).toHaveBeenCalledTimes(1))
-    expect(activateTabAndFocusPane).not.toHaveBeenCalled()
 
     // Why: latest click wins — a slower earlier intent must not steal focus when it lands.
     const oldFetch = Promise.withResolvers<void>()
@@ -569,8 +564,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     fetchWorktrees.mockImplementation((repoId: string) =>
       repoId === 'repo-old' ? oldFetch.promise : newFetch.promise
     )
-    activateAndRevealWorktree.mockClear()
-    activateTabAndFocusPane.mockClear()
+    vi.clearAllMocks()
     activateWorktreeListenerRef.current({
       repoId: 'repo-old',
       worktreeId: 'wt-old-intent',
@@ -591,7 +585,8 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     expect(activateAndRevealWorktree).toHaveBeenCalledWith('wt-new-intent', {
       executionHostId: 'local',
       notifyHostRuntime: false,
-      providesInitialSurface: true
+      providesInitialSurface: true,
+      restoreSessions: false
     })
     expect(activateTabAndFocusPane).toHaveBeenCalledTimes(1)
     expect(activateTabAndFocusPane).toHaveBeenCalledWith(
@@ -604,8 +599,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
   it('routes local and runtime worktree events to their owning hosts', async () => {
     const fetchWorktrees = vi.fn()
     const fetchWorktreeLineage = vi.fn()
-    // Mutable so the test can drop the runtime mid-run and prove the local flag
-    // is origin-based, not a sample of runtime state.
+    // Local origin survives a runtime disconnect during the refresh.
     const mockSettings: { activeRuntimeEnvironmentId: string | null; terminalFontSize: number } = {
       activeRuntimeEnvironmentId: 'env-1',
       terminalFontSize: 13
@@ -838,8 +832,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
 
     fetchWorktrees.mockClear()
     fetchWorktreeLineage.mockClear()
-    // With no runtime active the flag must still be true — it marks the event's
-    // local origin; sampling runtime state here would regress to false.
+    // Local origin is independent of the active runtime.
     mockSettings.activeRuntimeEnvironmentId = null
     localWorktreesOnChanged({ repoId: 'repo-1' })
     await new Promise((resolve) => setTimeout(resolve, 0))
