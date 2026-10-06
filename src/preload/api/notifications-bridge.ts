@@ -16,17 +16,8 @@ let cachedNotificationSound: {
   blobUrl: string
   audio: HTMLAudioElement
 } | null = null
-// Why: audio.play() can reject before ended/error fires; cleanup prevents leaked listeners.
-let cleanupNotificationSoundPlayback: (() => void) | null = null
-
-function clearNotificationSoundPlaybackState(): void {
-  cleanupNotificationSoundPlayback?.()
-  cleanupNotificationSoundPlayback = null
-}
-
 function disposeCachedNotificationSound(): void {
   if (cachedNotificationSound) {
-    clearNotificationSoundPlaybackState()
     cachedNotificationSound.audio.pause()
     cachedNotificationSound.audio.src = ''
     URL.revokeObjectURL(cachedNotificationSound.blobUrl)
@@ -91,29 +82,13 @@ export const notificationsApi = {
       if (typeof options?.volume === 'number' && Number.isFinite(options.volume)) {
         audio.volume = Math.min(1, Math.max(0, options.volume / 100))
       }
-      cleanupNotificationSoundPlayback?.()
-      const release = (): void => {
-        cleanup()
-        if (cleanupNotificationSoundPlayback === cleanup) {
-          cleanupNotificationSoundPlayback = null
-        }
-      }
-      const cleanup = (): void => {
-        audio.removeEventListener('ended', release)
-        audio.removeEventListener('error', release)
-      }
-      cleanupNotificationSoundPlayback = cleanup
-      audio.addEventListener('ended', release)
-      audio.addEventListener('error', release)
       try {
         await audio.play()
       } catch {
-        release()
         return { played: false, reason: 'playback-failed' }
       }
       return { played: true }
     } catch {
-      clearNotificationSoundPlaybackState()
       return { played: false, reason: 'playback-failed' }
     }
   }
